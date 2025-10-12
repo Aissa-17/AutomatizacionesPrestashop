@@ -1,0 +1,420 @@
+{
+  "name": "Precio",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 60
+            }
+          ]
+        }
+      },
+      "id": "83ae1723-9296-4616-b391-2ac448aed6c8",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -620,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pageSize=250,total=3000,pages=[];for(let o=0;o<total;o+=pageSize)pages.push({offset:o,pageSize});return pages.map(p=>({json:p}));"
+      },
+      "id": "d23a0fde-36e9-4c09-93bc-07110ad29c4a",
+      "name": "Build Offsets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://prestashop-proxy.aissa-allay.workers.dev/products",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "display",
+              "value": "[id,price,id_tax_rules_group]"
+            },
+            {
+              "name": "output_format",
+              "value": "JSON"
+            },
+            {
+              "name": "limit",
+              "value": "={{$json.offset}},{{$json.pageSize}}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "345618ac-ef11-4409-983c-b593249fb341",
+      "name": "GET PS products (price+group)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -200,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://91.99.15.45:8080/api/resource/Item",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "={{ JSON.stringify([\"name\"]) }}"
+            },
+            {
+              "name": "limit_start",
+              "value": "0"
+            },
+            {
+              "name": "limit_page_length",
+              "value": "20000"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "9ddba071-4a7f-4adb-8271-69b730c3cdc6",
+      "name": "GET ERP Items (all)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        20,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://91.99.15.45:8080/api/resource/Item%20Tax%20Template",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "={{ JSON.stringify([\"name\"]) }}"
+            },
+            {
+              "name": "filters",
+              "value": "=[[\"disabled\",\"=\",\"0\"]]"
+            },
+            {
+              "name": "limit_start",
+              "value": "0"
+            },
+            {
+              "name": "limit_page_length",
+              "value": "1000"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "2d21dad5-9335-47bf-a198-667401ebab16",
+      "name": "GET ERP Item Tax Templates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        240,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// PS -> {id, price, id_tax_rules_group}\n// ERP Items: $items(\"GET ERP Items (all)\").json.data[].name\n// ERP Templates: $items(\"GET ERP Item Tax Templates\").json.data[].name\n// Mapa grupos PS: 70->21%, 71->10%\n\nconst GROUP_TO_RATE = { \"70\": 21, \"71\": 10 };\n\nconst psProducts = $items('GET PS products (price+group)')\n  .flatMap(i => (i.json && i.json.products) ? i.json.products : []);\n\nconst erpRows = $items('GET ERP Items (all)')\n  .flatMap(i => (i.json && i.json.data) ? i.json.data : []);\nconst erpSet = new Set(erpRows.map(r => String(r.name)));\n\nconst tplRows = $items('GET ERP Item Tax Templates')\n  .flatMap(i => (i.json && i.json.data) ? i.json.data : []);\nconst templateNames = Array.from(new Set(tplRows.map(t => String(t.name))));\nconst onlyOneTemplate = templateNames.length === 1 ? templateNames[0] : null;\n\n// Si ya creaste ambas, pon aquí sus nombres exactos\nconst EXACT = { 21: 'Spain Tax 21 - Tera', 10: 'Spain Tax 10 - Tera' };\n\nfunction findTemplateName(rate) {\n  if (EXACT[rate] && templateNames.includes(EXACT[rate])) return EXACT[rate];\n  const rx = new RegExp(String(rate), 'i');\n  const byRegex = templateNames.find(n => rx.test(n));\n  if (byRegex) return byRegex;\n  if (onlyOneTemplate) return onlyOneTemplate;\n  return null;\n}\n\nconst out = [];\nconst warn = [];\n\nfor (const p of psProducts) {\n  const item_code = String(p.id);\n  if (!erpSet.has(item_code)) continue;\n\n  const standard_rate = Number(p.price ?? 0) || 0;\n  if (!(standard_rate > 0)) continue;\n\n  const grp  = (p.id_tax_rules_group != null) ? String(p.id_tax_rules_group) : null;\n  const rate = (grp && GROUP_TO_RATE[grp] != null) ? GROUP_TO_RATE[grp] : null;\n\n  const body = { item_code, standard_rate };\n\n  if (rate != null) {\n    const name = findTemplateName(rate);\n    if (name) {\n      body.item_tax_template = name; // 👈 asignación directa en el Item\n      if (onlyOneTemplate) warn.push({ item_code, used_single_template: name, expected_rate: rate });\n    } else {\n      warn.push({ item_code, msg: 'Sin plantilla para la tasa', expected_rate: rate, templates: templateNames });\n    }\n  } else if (grp) {\n    warn.push({ item_code, msg: 'Grupo PS no mapeado', group: grp });\n  }\n\n  out.push({ json: body });\n}\n\nif (warn.length) console.log('WARN tax mapping:', warn);\nreturn out;\n"
+      },
+      "id": "9573f619-15c8-4865-b255-07ed0e3203e9",
+      "name": "Build Price+Tax Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 50,
+        "options": {}
+      },
+      "id": "33b113fb-719b-4485-90ac-85e6322f7d7a",
+      "name": "Split In Batches (50)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        640,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{\"http://91.99.15.45:8080/api/resource/Item/\" + $json.item_code}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ standard_rate: Number($json.standard_rate || 0), ...( $json.item_tax_template ? { item_tax_template: $json.item_tax_template } : {} ) }) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "b321fdf8-29bc-4bf4-95a0-d9a145871695",
+      "name": "PUT Item (precio + impuesto)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        860,
+        -80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{   'http://91.99.15.45:8080/api/resource/Item/'   + encodeURIComponent(       $json.data?.name       || $json.data?.item_code       || $json.item_code       || $item(0).$node[\"Split In Batches (50)\"].json.item_code       || $item(0).$node[\"Build Price+Tax Updates\"].json.item_code     ) }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "{{ JSON.stringify([\"name\",\"item_code\",\"item_name\",\"standard_rate\",\"item_tax_template\"]) }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "4b633f07-1b03-4255-be73-08dcc974007b",
+      "name": "GET Item (verificación)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1080,
+        -80
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Offsets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Offsets": {
+      "main": [
+        [
+          {
+            "node": "GET PS products (price+group)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET PS products (price+group)": {
+      "main": [
+        [
+          {
+            "node": "GET ERP Items (all)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET ERP Items (all)": {
+      "main": [
+        [
+          {
+            "node": "GET ERP Item Tax Templates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET ERP Item Tax Templates": {
+      "main": [
+        [
+          {
+            "node": "Build Price+Tax Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Price+Tax Updates": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches (50)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches (50)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "PUT Item (precio + impuesto)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PUT Item (precio + impuesto)": {
+      "main": [
+        [
+          {
+            "node": "GET Item (verificación)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET Item (verificación)": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches (50)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "6a1a0a65-6529-40a5-b787-5973318c4750",
+  "meta": {
+    "instanceId": "7b4a938e22ec96aa70bd835a8a3505c5adeefb6a7712237c6a9fa0f3865bb712"
+  },
+  "id": "IgnU2hZJgTDWcMik",
+  "tags": []
+}

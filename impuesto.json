@@ -1,0 +1,420 @@
+{
+  "name": "impuesto",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 60
+            }
+          ]
+        }
+      },
+      "id": "4d800e6a-219f-4b54-97b1-7238830b6ed1",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        300,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pageSize=250,total=3000,pages=[];for(let o=0;o<total;o+=pageSize)pages.push({offset:o,pageSize});return pages.map(p=>({json:p}));"
+      },
+      "id": "0b7d107f-35c8-4054-a4b1-c853f5fb1c04",
+      "name": "Build Offsets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://prestashop-proxy.aissa-allay.workers.dev/products",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "display",
+              "value": "[id,id_tax_rules_group]"
+            },
+            {
+              "name": "output_format",
+              "value": "JSON"
+            },
+            {
+              "name": "limit",
+              "value": "={{$json.offset}},{{$json.pageSize}}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "225b33a5-c0c8-42cd-ac94-3725a7902d5c",
+      "name": "GET PS products (tax group)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        720,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://91.99.15.45:8080/api/resource/Item",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "={{ JSON.stringify([\"name\"]) }}"
+            },
+            {
+              "name": "limit_start",
+              "value": "0"
+            },
+            {
+              "name": "limit_page_length",
+              "value": "20000"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "c3617bd6-b04c-4bd6-8c81-9848d024ef70",
+      "name": "GET ERP Items (all)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        940,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://91.99.15.45:8080/api/resource/Item%20Tax%20Template",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "={{ JSON.stringify([\"name\"]) }}"
+            },
+            {
+              "name": "filters",
+              "value": "=[[\"disabled\",\"=\",\"0\"]]"
+            },
+            {
+              "name": "limit_start",
+              "value": "0"
+            },
+            {
+              "name": "limit_page_length",
+              "value": "1000"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "8d23c992-2b2a-4075-a4e3-284888ae6f91",
+      "name": "GET ERP Item Tax Templates",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1160,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "//   NODOS DE LOS QUE LEEMOS (ajusta los nombres si no coinciden)\nconst SOURCES = {\n  ps: 'GET PS products (tax group)',\n  erpItems: 'GET ERP Items (all)',\n  erpTemplates: 'GET ERP Item Tax Templates',\n};\n\n//   MAPA PS -> IVA (ajústalo si tus ids de PS son otros)\nconst GROUP_TO_RATE = { '70': 21, '71': 10 };\n\n//   NOMBRES EXACTOS DE TUS PLANTILLAS EN ERPNext\nconst EXACT = {\n  21: 'Item VAT 21 - Tera',\n  10: 'Item VAT 10 - Tera',\n};\n\n// ---- utilidades robustas ----\nfunction safeItems(nodeName) {\n  try {\n    const arr = $items(nodeName);\n    if (Array.isArray(arr)) return arr;\n  } catch (e) {\n    // node no encontrado o sin datos\n  }\n  return [];\n}\n\nfunction toArray(val) {\n  return Array.isArray(val) ? val : (val ? [val] : []);\n}\n\n// ---- recoger datos de otros nodos (sin reventar si faltan) ----\nconst psProducts = safeItems(SOURCES.ps)\n  .flatMap(i => (i && i.json && i.json.products) ? i.json.products : []);\n\nconst erpRows = safeItems(SOURCES.erpItems)\n  .flatMap(i => (i && i.json && i.json.data) ? i.json.data : []);\nconst erpSet = new Set(erpRows.map(r => String(r.name)));\n\nconst tplRows = safeItems(SOURCES.erpTemplates)\n  .flatMap(i => (i && i.json && i.json.data) ? i.json.data : []);\nconst templateNames = Array.from(new Set(tplRows.map(t => String(t.name))));\n\n// ---- selector de plantilla: solo EXACT para evitar ambigüedades ----\nfunction pickTemplate(rate) {\n  const name = EXACT[rate];\n  if (name && templateNames.includes(name)) return name;\n  return null;\n}\n\n// ---- construir salidas ----\nconst out = [];\nconst warn = [];\n\nfor (const p of psProducts) {\n  if (!p || p.id == null) continue;\n  const item_code = String(p.id);\n  if (!erpSet.has(item_code)) continue; // solo si existe Item en ERP\n\n  const grp  = (p.id_tax_rules_group != null) ? String(p.id_tax_rules_group) : null;\n  const rate = (grp && GROUP_TO_RATE[grp] != null) ? GROUP_TO_RATE[grp] : null; // 10|21\n\n  const body = { item_code };\n\n  if (rate != null) {\n    const tpl = pickTemplate(rate);\n    if (tpl) {\n      body.item_tax_template = tpl;       // lo usará el PUT para escribir la child table\n    } else {\n      warn.push({ item_code, msg: 'No template for rate', rate, have: templateNames });\n    }\n  } else if (grp) {\n    warn.push({ item_code, msg: 'Unmapped PS tax group', grp });\n  }\n\n  out.push({ json: body });\n}\n\n// log no rompe el nodo\nif (warn.length) console.log('TAX WARN:', warn);\n\n// Devuelve SIEMPRE un array\nreturn out;\n"
+      },
+      "id": "1c45e89f-011f-4311-905c-7521ba9c5f91",
+      "name": "Build Tax Updates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1380,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 100,
+        "options": {}
+      },
+      "id": "4de2cec1-4804-48f1-a36a-2f92a8910ac6",
+      "name": "Split In Batches (50)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1600,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{\"http://91.99.15.45:8080/api/resource/Item/\" + $json.item_code}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify( $json.item_tax_template ? { taxes: [ { doctype: 'Item Tax', item_tax_template: $json.item_tax_template, idx: 1 } ] } : {} ) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "85b3c478-ebb4-459f-bf8f-fa7c9ca93ab0",
+      "name": "PUT Item (solo impuestos)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1820,
+        -160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ \n  'http://91.99.15.45:8080/api/resource/Item/' \n  + encodeURIComponent(\n      $json.item_code\n      || $json.data?.name\n      || $json.parent\n      || $item(0).$node[\"Split In Batches (50)\"].json.item_code\n      || $item(0).$node[\"Build Tax Updates\"].json.item_code\n    ) \n}}\n",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "{{ JSON.stringify([\"name\",\"item_code\",\"taxes.item_tax_template\",\"taxes.idx\"]) }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "60ba9e7a-4a3d-4dc2-9a33-c7914e1fc604",
+      "name": "GET Item (verificación)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2040,
+        -160
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Offsets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Offsets": {
+      "main": [
+        [
+          {
+            "node": "GET PS products (tax group)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET PS products (tax group)": {
+      "main": [
+        [
+          {
+            "node": "GET ERP Items (all)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET ERP Items (all)": {
+      "main": [
+        [
+          {
+            "node": "GET ERP Item Tax Templates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET ERP Item Tax Templates": {
+      "main": [
+        [
+          {
+            "node": "Build Tax Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Tax Updates": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches (50)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches (50)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "PUT Item (solo impuestos)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PUT Item (solo impuestos)": {
+      "main": [
+        [
+          {
+            "node": "GET Item (verificación)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET Item (verificación)": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches (50)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "0b099864-4e3d-4859-8b20-84a7b76ea73b",
+  "meta": {
+    "instanceId": "7b4a938e22ec96aa70bd835a8a3505c5adeefb6a7712237c6a9fa0f3865bb712"
+  },
+  "id": "XW2qN8xWW4WkceGx",
+  "tags": []
+}

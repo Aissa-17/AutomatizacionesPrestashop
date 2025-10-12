@@ -1,0 +1,455 @@
+{
+  "name": "entremascotas",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 60
+            }
+          ]
+        }
+      },
+      "id": "47cec773-1d79-41a2-97db-eda06eb760c5",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2620,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pageSize=250,total=3000,pages=[];for(let o=0;o<total;o+=pageSize)pages.push({offset:o,pageSize});return pages.map(p=>({json:p}));"
+      },
+      "id": "3a99c13d-4433-4355-a60d-b114a67f95e4",
+      "name": "Build Offsets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2400,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://prestashop-proxy.aissa-allay.workers.dev/products",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "display",
+              "value": "[id,name,price,description,id_default_image]"
+            },
+            {
+              "name": "output_format",
+              "value": "JSON"
+            },
+            {
+              "name": "limit",
+              "value": "={{$json.offset}},{{$json.pageSize}}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "9c5771e8-8390-4f57-96c6-8b58108b09df",
+      "name": "GET PS products (proxy)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -2180,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const pages=$input.all().map(i=>i.json);const out=[];function clean(s){return typeof s==='string'?s.trim():'';}for(const pg of pages){const prods=pg.products||[];for(const pr of prods){const id=String(pr.id||'');if(!id)continue;let price=Number((pr.price||'0').toString().replace(',','.'));if(!Number.isFinite(price))price=0;const imgId=pr.id_default_image;const imageUrl=imgId?`https://prestashop-proxy.aissa-allay.workers.dev/images/products/${id}/${imgId}`:'';out.push({json:{item_code:id,item_name:(clean(pr.name)||`Producto ${id}`).slice(0,128),description:clean(pr.description)||'',price,imageUrl,stock_uom:'Unidad(es)',item_group:'Productos',is_stock_item:1}});}}return out;"
+      },
+      "id": "8c904f80-81a2-4be6-a27e-a4984b438b0b",
+      "name": "Map → ERP payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1960,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 50,
+        "options": {}
+      },
+      "id": "1f8f9f01-2d6c-4366-8e94-7ed3790d6f19",
+      "name": "Split In Batches (50)",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        -1740,
+        240
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://91.99.15.45:8080/api/resource/Item",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"item_code\":\"{{$json.item_code}}\",\"item_name\":\"{{$json.item_name}}\",\"stock_uom\":\"Unidad(es)\",\"item_group\":\"Productos\",\"is_stock_item\":1}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "6e72c492-d59c-4e05-bf2c-9dd4b41f936e",
+      "name": "POST Item (create; ignora 409)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -1520,
+        160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "id": "ea593b6f-1ab0-4ab8-a581-9edd8569e79d",
+      "name": "Wait 200ms",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [
+        -1320,
+        160
+      ],
+      "webhookId": "d9a3875d-6dc6-4c46-92f4-1c7c0fc633f3"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=http://91.99.15.45:8080/api/resource/Item/{{$json.item_code}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"item_name\": \"={{$json.item_name}}\",\n  \"description\": \"={{$json.description}}\",\n  \"stock_uom\": \"Unidad(es)\",\n  \"item_group\": \"Productos\",\n  \"is_stock_item\": 1,\n  \"standard_rate\": ={{ Number($json.price || 0) }}\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "0014c308-22af-4900-8f3e-916444f3a4ee",
+      "name": "PUT Item (datos + standard_rate)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -1120,
+        160
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://91.99.15.45:8080/api/method/upload_file",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "858bda1b-7ee1-41a4-af45-50f46f385c73",
+      "name": "upload_file (file_url)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -920,
+        240
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{`http://91.99.15.45:8080/api/resource/Item/${$json.message && $json.message.file_url ? $json.message.docname : $item(0).$node['Map → ERP payload'].json.item_code}`}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={ \"image\": \"={{ $json.message?.file_url || '' }}\", \"website_image\": \"={{ $json.message?.file_url || '' }}\" }",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "1bcfe7e3-11c8-42a4-9e3c-f3b6f444c9be",
+      "name": "PUT Item.image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -700,
+        240
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://91.99.15.45:8080/api/resource/Item%20Price",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"item_code\": \"={{$item(0).$node['Map → ERP payload'].json.item_code}}\",\n  \"price_list\": \"Standard Selling\",\n  \"price_list_rate\": ={{ Number($item(0).$node['Map → ERP payload'].json.price || 0) }},\n  \"currency\": \"EUR\",\n  \"selling\": 1\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "78c337cc-6dc2-417e-8858-a7931cb8a624",
+      "name": "POST Item Price",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -480,
+        240
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Offsets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Offsets": {
+      "main": [
+        [
+          {
+            "node": "GET PS products (proxy)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET PS products (proxy)": {
+      "main": [
+        [
+          {
+            "node": "Map → ERP payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map → ERP payload": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches (50)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches (50)": {
+      "main": [
+        [],
+        [
+          {
+            "node": "POST Item (create; ignora 409)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Item (create; ignora 409)": {
+      "main": [
+        [
+          {
+            "node": "Wait 200ms",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait 200ms": {
+      "main": [
+        [
+          {
+            "node": "PUT Item (datos + standard_rate)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PUT Item (datos + standard_rate)": {
+      "main": [
+        [
+          {
+            "node": "upload_file (file_url)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "upload_file (file_url)": {
+      "main": [
+        [
+          {
+            "node": "PUT Item.image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "PUT Item.image": {
+      "main": [
+        [
+          {
+            "node": "POST Item Price",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Item Price": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches (50)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "6b1a7602-8162-4bbf-9b2e-94db0f40a4a2",
+  "meta": {
+    "instanceId": "7b4a938e22ec96aa70bd835a8a3505c5adeefb6a7712237c6a9fa0f3865bb712"
+  },
+  "id": "hdvHuCZ7zaRaQrRx",
+  "tags": []
+}

@@ -1,0 +1,337 @@
+{
+  "name": "Stock",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "932bd6e1-434e-4e15-9927-36ff3fa9de78",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        540,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://prestashop-proxy.aissa-allay.workers.dev/stock_availables",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "display",
+              "value": "[id_product,quantity]"
+            },
+            {
+              "name": "output_format",
+              "value": "JSON"
+            },
+            {
+              "name": "limit",
+              "value": "0,5000"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "85b90415-0f44-41c1-8a67-510bff09157e",
+      "name": "GET PS stock_availables",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        740,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://91.99.15.45:8080/api/resource/Item",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "={{ JSON.stringify([\"name\"]) }}"
+            },
+            {
+              "name": "limit_start",
+              "value": "0"
+            },
+            {
+              "name": "limit_page_length",
+              "value": "20000"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "c5a099fa-aedc-429a-a129-86abb3a8c61d",
+      "name": "GET ERP Items (all)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1000,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const COMPANY      = \"Terasfw\";                 // Nombre de la compañía\nconst WAREHOUSE    = \"Tienda animal - Tera\";    // Almacén (misma empresa)\nconst COST_CENTER  = \"Principal - Tera\";        // Centro de coste (misma empresa)\nconst DIFF_ACCOUNT = \"Apertura de Inventario - Tera\"; // CUENTA DE ACTIVO (no gasto)\nconst DEFAULT_VALUATION_RATE = 1;               // Valoración mínima por unidad\n\n// === 1) Tomar stock de PrestaShop ===\nconst psItemsAll = $items(\"GET PS stock_availables\")\n  .flatMap(i => (i.json?.stock_availables ?? []));\n\n// Sumar por id_product (por si viene repetido)\nconst psQtyByProduct = new Map();\nfor (const row of psItemsAll) {\n  const pid = String(row.id_product);\n  const qty = Number(row.quantity) || 0;\n  psQtyByProduct.set(pid, (psQtyByProduct.get(pid) ?? 0) + qty);\n}\n\n// === 2) Tomar Items existentes en ERP ===\n// Este nodo recibe como input el resultado de \"GET ERP Items (all)\"\nconst erpRows = $input.all().flatMap(i => i.json?.data ?? []);\nconst erpItemSet = new Set(erpRows.map(r => String(r.name)));\n\n// === 3) Construir líneas de SR solo para items existentes en ERP ===\nconst items = [];\nfor (const [item_code, qty] of psQtyByProduct.entries()) {\n  if (!erpItemSet.has(item_code)) continue; // saltar los que no existen en ERP\n  items.push({\n    item_code,\n    warehouse: WAREHOUSE,\n    qty,\n    valuation_rate: DEFAULT_VALUATION_RATE\n  });\n}\n\n// Si no hay ninguna línea válida, no devolvemos nada para que el flujo no intente POST vacío\nif (items.length === 0) {\n  console.log(\"[SR] No hay items comunes PS∩ERP. No se genera SR.\");\n  return [];\n}\n\n// === 4) Fechas de contabilización ===\nconst now = new Date();\n// (Opcional) Si prefieres hora fija de tu captura, cámbiala aquí.\nconst posting_date = now.toISOString().slice(0,10);       // YYYY-MM-DD\nconst posting_time = now.toTimeString().slice(0,8);       // HH:MM:SS\n\n// === 5) Body final de Stock Reconciliation ===\nconst body = {\n  company: COMPANY,\n  purpose: \"Stock Reconciliation\",\n  posting_date,\n  posting_time,\n  set_posting_time: 1,\n  expense_account: DIFF_ACCOUNT,   // <— antes era difference_account\n  cost_center: COST_CENTER,\n  items\n};\n\n// (Opcional) Logs útiles\nconsole.log(`[SR] Líneas: ${items.length}`);\nconsole.log(`[SR] company=${COMPANY}, diff_account=${DIFF_ACCOUNT}, warehouse=${WAREHOUSE}, cost_center=${COST_CENTER}`);\n\nreturn [{ json: { body } }];"
+      },
+      "id": "e2873c82-bafd-4cbb-bcd5-9b67bcaf25c4",
+      "name": "Code: Build Single SR",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://91.99.15.45:8080/api/resource/Stock%20Reconciliation",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{$json.body}}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "e912787f-5aa1-4273-81e4-137840f58ffa",
+      "name": "POST Stock Reconciliation (single)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1940,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "={{\"http://91.99.15.45:8080/api/resource/Stock%20Reconciliation/\" + $json.data.name}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{ \"docstatus\": 1 }",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "25f9b2b6-d75f-485e-911c-18069ab41c19",
+      "name": "Submit SR (docstatus=1)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        2160,
+        -100
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "batchSize": 100,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1440,
+        -100
+      ],
+      "id": "1f3257f7-f901-47f6-bf6a-103726fdbd9a",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Asume que el cuerpo viene como $json.body\nconst body = $json.body;\n\n// Normaliza tipos y corrige cantidades\nconst errores = [];\nbody.items = body.items.map(i => ({\n  ...i,\n  qty: Number(i.qty),               // asegúrate de que sea número\n  valuation_rate: Number(i.valuation_rate ?? 0)\n})).map(i => {\n  if (isNaN(i.qty)) {\n    errores.push(`qty NaN en ${i.item_code}`);\n    i.qty = 0;\n  }\n  if (i.qty < 0) {\n    errores.push(`qty negativa ${i.qty} en ${i.item_code} -> forzada a 0`);\n    i.qty = 0;                      // o en su lugar exclúyelo del array\n    // return null;                 // si prefieres excluirlo\n  }\n  return i;\n})\n// .filter(Boolean)                 // descomenta si optaste por excluir negativos\n\nconsole.log('[SR] Correcciones:', errores);\n\nreturn [{ json: { body } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        -80
+      ],
+      "id": "cc0b8fdc-8296-43b1-802d-e1f81316b580",
+      "name": "Code"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "GET PS stock_availables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET PS stock_availables": {
+      "main": [
+        [
+          {
+            "node": "GET ERP Items (all)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET ERP Items (all)": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Single SR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Single SR": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST Stock Reconciliation (single)": {
+      "main": [
+        [
+          {
+            "node": "Submit SR (docstatus=1)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit SR (docstatus=1)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "POST Stock Reconciliation (single)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "a2618c68-d0f8-4174-b389-7cc8daa547f4",
+  "meta": {
+    "instanceId": "7b4a938e22ec96aa70bd835a8a3505c5adeefb6a7712237c6a9fa0f3865bb712"
+  },
+  "id": "gTGmWgxt2xMNllxK",
+  "tags": []
+}

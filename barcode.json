@@ -1,0 +1,282 @@
+{
+  "name": "barcode",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const ok = $input.first();\nconsole.log(`[BARCODES] Actualizado: ${ok.json?.item_code} -> ${ok.json?.barcode}`);\nreturn [ok];"
+      },
+      "id": "63c8d191-8d86-4d3f-92a2-e1d6d5606f04",
+      "name": "Code: Log OK",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        820,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=http://91.99.15.45:8080/api/resource/Item/{{$json.item_code}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  barcodes: [\n    { barcode: $json.barcode, barcode_type: \"EAN\" }\n  ],\n  ignore_version: 1\n}) }}",
+        "options": {}
+      },
+      "id": "8d320714-50a0-4548-91d4-42d7b2714cad",
+      "name": "PUT ERP Item.barcode",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        580,
+        -220
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "def19a82-df9a-433d-bb27-f36142ddc729",
+      "name": "SplitInBatches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        340,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1) Cargar productos PS\nconst psProducts = $items(\"GET PS products (id, ean13, upc)\")\n  .flatMap(i => (i.json?.products ?? []));\n\n// 2) Cargar items ERP (input directo)\nconst erpRows = $input.all().flatMap(i => i.json?.data ?? []);\nconst erpSet = new Set(erpRows.map(r => String(r.name)));\n\n// 3) Preparar lista de actualizaciones a ERP: {item_code, barcode}\nconst updates = [];\nfor (const p of psProducts) {\n  const id = String(p.id ?? \"\").trim();\n  if (!id || !erpSet.has(id)) continue;\n\n  // prioriza ean13, luego upc\n  let bc = String(p.ean13 ?? \"\").trim();\n  if (!bc) bc = String(p.upc ?? \"\").trim();\n\n  // Normaliza: elimina espacios, valida sólo dígitos y letras básicas\n  bc = bc.replace(/\\s+/g, \"\");\n\n  if (!bc) continue; // no escribas vacío\n\n  updates.push({ item_code: id, barcode: bc });\n}\n\nconsole.log(`[BARCODES] Candidatos a actualizar: ${updates.length}`);\n\n// Si no hay nada, no devolver items => no se ejecuta nada más\nif (updates.length === 0) return [];\n\nreturn updates.map(u => ({ json: u }));"
+      },
+      "id": "d992775f-2bcb-42d3-8df9-bae8597fdc92",
+      "name": "Code: Build Update List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        100,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://91.99.15.45:8080/api/resource/Item",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "={{ JSON.stringify([\"name\"]) }}\n"
+            },
+            {
+              "name": "limit_start",
+              "value": "0"
+            },
+            {
+              "name": "limit_page_length",
+              "value": "20000"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "token 4843743f6a3c093:98741828fb7c553"
+            },
+            {
+              "name": "X-Frappe-Site-Name",
+              "value": "frontend"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "326f58b8-7ed2-4f1b-bd3e-f688cefc039e",
+      "name": "GET ERP Items (all)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -120,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://prestashop-proxy.aissa-allay.workers.dev/products",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "display",
+              "value": "[id,ean13,upc]"
+            },
+            {
+              "name": "output_format",
+              "value": "JSON"
+            },
+            {
+              "name": "limit",
+              "value": "0,5000"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "725e0f20-3472-41d0-ab2d-299253dee0a3",
+      "name": "GET PS products (id, ean13, upc)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        -400,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "d8f964cd-3a37-4029-8c6f-2384b9955bb0",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [
+        -620,
+        -220
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "PUT ERP Item.barcode": {
+      "main": [
+        [
+          {
+            "node": "Code: Log OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Log OK": {
+      "main": [
+        [
+          {
+            "node": "SplitInBatches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SplitInBatches": {
+      "main": [
+        [],
+        [
+          {
+            "node": "PUT ERP Item.barcode",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Build Update List": {
+      "main": [
+        [
+          {
+            "node": "SplitInBatches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET ERP Items (all)": {
+      "main": [
+        [
+          {
+            "node": "Code: Build Update List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET PS products (id, ean13, upc)": {
+      "main": [
+        [
+          {
+            "node": "GET ERP Items (all)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "GET PS products (id, ean13, upc)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2a5cdbf7-a99f-41b7-98c3-3bdba6c2794e",
+  "meta": {
+    "instanceId": "7b4a938e22ec96aa70bd835a8a3505c5adeefb6a7712237c6a9fa0f3865bb712"
+  },
+  "id": "qyfRzsSGbL4HryMY",
+  "tags": []
+}
